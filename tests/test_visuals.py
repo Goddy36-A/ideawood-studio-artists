@@ -10,13 +10,18 @@ from ideawood_artists.scenes import plan_scenes
 class FakeCloud:
     signed_in = True
 
-    def __init__(self, fail_compose=False):
-        self.fail_compose, self.searched = fail_compose, []
+    def __init__(self, fail_compose=False, fail_provider=False):
+        self.fail_compose, self.fail_provider, self.searched = fail_compose, fail_provider, []
 
     def compose(self, prompt):
         if self.fail_compose:
             raise CloudError("down")
         return {"items": [{"visual": f"ocean sunset {i}"} for i in range(10)], "backgroundQuery": "calm"}
+
+    def background_visuals(self, lines, media="image", style="cinematic"):
+        if self.fail_provider:
+            raise CloudError("provider down")
+        return [{"line": lines[0] if lines else "rain", "url": "http://x/clip", "kind": media, "credit": "Pexels / Someone"}]
 
     def media_items(self, kind, query, orientation=None, page=1):
         self.searched.append((kind, query))
@@ -59,6 +64,13 @@ def test_fill_scenes_downloads_and_records_credit(tmp_path):
     assert rep["filled"] == len(p.scenes)
     assert all(s.kind == "video" and os.path.isfile(s.path) and s.source == "ai" for s in p.scenes)
     assert "Pexels" in V.credits_text(p)
+
+
+def test_provider_visuals_used_when_available(tmp_path):
+    p = proj()
+    rep = V.fill_scenes(FakeCloud(fail_compose=False), p, "video", workdir=str(tmp_path))
+    assert rep["filled"] == len(p.scenes)
+    assert all(s.source == "ai" and s.path for s in p.scenes)
 
 
 def test_no_key_keeps_gradients(tmp_path):

@@ -3,6 +3,7 @@
 Online (needs the API key, same cloud as the main Ideawood Studio):
   1. ``compose`` is asked for one short stock-footage search phrase per scene (it sees the mood and the lyrics).
   2. Each phrase is searched with ``media`` (video and/or image) and the first usable result is downloaded.
+  3. If supported, the dedicated background-visual provider is called with the actual lyric lines and returns ready-made scene visuals.
 Offline fallback (no key, or the cloud fails): search phrases are built from the lyrics themselves with a small
 mood lexicon, and anything that cannot be fetched stays a designed animated gradient - the video always renders.
 
@@ -138,6 +139,31 @@ class Candidate:
     credit: str
 
 
+def _visuals_provider_candidates(cloud: CloudClient, p: Project, sc: Scene, prefer: str, style: str = "cinematic") -> List[Candidate]:
+    """Use the dedicated lyric-visual API if the client supports it; returns [] if it is unavailable."""
+    if getattr(cloud, "background_visuals", None) is None:
+        return []
+    try:
+        lines = [l.text.strip() for l in scene_lines(p, sc) if l.text and l.text.strip()]
+        if not lines:
+            lines = [scene_text(p, sc).strip()]
+        payload = cloud.background_visuals(lines, media=prefer, style=style or "cinematic")
+    except (CloudError, TypeError, ValueError):
+        return []
+    out: List[Candidate] = []
+    for item in payload or []:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url") or item.get("download_url")
+        if not url:
+            continue
+        kind = str(item.get("kind") or item.get("media") or prefer or "image").lower()
+        if kind not in {"image", "video"}:
+            kind = "video" if url.lower().endswith((".mp4", ".mov", ".webm", ".m4v", ".avi", ".mkv")) else "image"
+        out.append(Candidate(kind, url, item.get("thumb") or "", item.get("title") or item.get("line") or "", item.get("credit") or ""))
+    return out
+
+
 def search(cloud: CloudClient, query: str, kinds, orientation: Optional[str], limit: int = 8) -> List[Candidate]:
     out: List[Candidate] = []
     for kind in kinds:
@@ -221,16 +247,24 @@ def fill_scenes(cloud: Optional[CloudClient], p: Project, prefer: str = "video",
             continue
         on_status(f"Finding visuals {n + 1}/{len(idxs)}: \"{sc.query}\"")
         got = None
-        for q in [sc.query, fallback_query(scene_text(p, sc), p.mood, p.genre, i)]:
-            for cand in search(cloud, q, _kinds_for(prefer, i), p.orientation, limit=4):
-                try:
-                    path = download(cloud, cand, os.path.join(wd, f"scene_{abs(hash((q, i))) % 10**8}"))
-                    got = (cand, path)
-                    break
-                except CloudError:
-                    continue
-            if got:
+        for cand in _visuals_provider_candidates(cloud, p, sc, prefer, style=p.mood or p.genre or "cinematic"):
+            try:
+                path = download(cloud, cand, os.path.join(wd, f"scene_{abs(hash((cand.url, i))) % 10**8}"))
+                got = (cand, path)
                 break
+            except CloudError:
+                continue
+        if not got:
+            for q in [sc.query, fallback_query(scene_text(p, sc), p.mood, p.genre, i)]:
+                for cand in search(cloud, q, _kinds_for(prefer, i), p.orientation, limit=4):
+                    try:
+                        path = download(cloud, cand, os.path.join(wd, f"scene_{abs(hash((q, i))) % 10**8}"))
+                        got = (cand, path)
+                        break
+                    except CloudError:
+                        continue
+                if got:
+                    break
         if got:
             cand, path = got
             sc.kind, sc.path, sc.credit, sc.source = cand.kind, path, cand.credit, "ai"
@@ -288,3 +322,22 @@ def thumbnail(path: str, kind: str, out_png: Optional[str] = None, width: int = 
            "-vf", f"scale={width}:-2", out_png]
     r = subprocess.run(cmd, capture_output=True, creationflags=no_window_flags())
     return out_png if r.returncode == 0 and os.path.exists(out_png) else None
+
+
+__all__ = [
+    "Candidate",
+    "assign_local",
+    "build_plan_prompt",
+    "classify",
+    "credits_text",
+    "download",
+    "fallback_query",
+    "fill_scenes",
+    "keywords",
+    "media_dir",
+    "plan_queries",
+    "scene_lines",
+    "scene_text",
+    "search",
+    "thumbnail",
+]
