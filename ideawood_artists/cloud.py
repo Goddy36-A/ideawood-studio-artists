@@ -18,6 +18,7 @@ import urllib.request
 
 # Override via env for staging.
 API_BASE = os.environ.get("IDEAWOOD_API_BASE") or os.environ.get("VOXCUT_API_BASE") or "https://quotetube.lovable.app".rstrip("/")
+VISUAL_API_BASE = os.environ.get("IDEAWOOD_VISUAL_API_BASE") or "https://lyric-visual.onrender.com".rstrip("/")
 
 MEDIA_KINDS = ("image", "video", "music")
 IDEA_KINDS = ("quote",)  # extend as the server adds more
@@ -52,9 +53,10 @@ class NotSignedIn(CloudError):
 class CloudClient:
     """Authenticates with a QuoteTube API key sent as ``Authorization: Bearer <key>``."""
 
-    def __init__(self, api_key="", api_base=API_BASE):
+    def __init__(self, api_key="", api_base=API_BASE, visual_api_base=VISUAL_API_BASE):
         self.api_base = api_base.rstrip("/")
         self.api_key = (api_key or "").strip()
+        self.visual_api_base = (visual_api_base or VISUAL_API_BASE).rstrip("/")
 
     # ---------------- auth
     @property
@@ -103,6 +105,34 @@ class CloudClient:
         except json.JSONDecodeError as e:
             raise CloudError("The server sent an unreadable response.") from e
 
+    def _post_json(self, url, payload, headers=None):
+        req_headers = {"Content-Type": "application/json", "Accept": "application/json", "User-Agent": USER_AGENT}
+        if headers:
+            req_headers.update(headers)
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers=req_headers,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode("utf-8", "replace")
+            msg = _server_message(raw)
+            if e.code == 401:
+                raise NotSignedIn(f"The provider rejected the API key (401){msg} - check it is current, "
+                                  "complete and not revoked.") from e
+            if e.code == 403:
+                raise CloudError(f"Access denied (403){msg}. If your key is valid, the server or its firewall "
+                                 "blocked this request.") from e
+            raise CloudError(f"Server error {e.code}{msg}") from e
+        except urllib.error.URLError as e:
+            raise CloudError(f"Cannot reach the provider: {e.reason}") from e
+        except json.JSONDecodeError as e:
+            raise CloudError("The provider sent an unreadable response.") from e
+
     # ---------------- endpoints
     def ideas(self, topic, count=5, kind="quote"):
         return self._post("/api/public/v1/ideas",
@@ -149,6 +179,53 @@ class CloudClient:
         """media() -> list of items: {id, kind, url, thumb, title, credit, creditUrl, source}."""
         return self.media(kind, query, orientation, page).get("items") or []
 
+    def background_visuals(self, lines, media="image", style="cinematic", api_key=None, api_base=None, timeout=TIMEOUT):
+        """Call the lyric-visual provider that turns lyric lines into JSON scene objects.
+
+        Example response:
+            [{"line": "I cry in the rain", "url": "https://...jpg"}, ...]
+        """
+        key = (api_key or self.api_key or "").strip()
+        if not key:
+            raise NotSignedIn("Please paste your API key first.")
+        base = (api_base or self.visual_api_base or VISUAL_API_BASE).rstrip("/")
+        body = {"lines": list(lines), "media": media, "style": style}
+        req = urllib.request.Request(
+            f"{base}/v1/visuals",
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": USER_AGENT,
+                "X-API-Key": key,
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                payload = json.loads(r.read().decode("utf-8"))
+                if isinstance(payload, dict) and "visuals" in payload:
+                    return payload["visuals"]
+                if isinstance(payload, list):
+                    return payload
+                raise CloudError("The background visual provider returned an unexpected payload.")
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode("utf-8", "replace")
+            msg = _server_message(raw)
+            if e.code == 401:
+                raise NotSignedIn(f"The provider rejected the API key (401){msg} - check it is current, complete and not revoked.") from e
+            if e.code == 403:
+                raise CloudError(f"Access denied (403){msg}. If your key is valid, the server or its firewall blocked this request.") from e
+            raise CloudError(f"Provider error {e.code}{msg}") from e
+        except urllib.error.URLError as e:
+            raise CloudError(f"Cannot reach the provider: {e.reason}") from e
+        except json.JSONDecodeError as e:
+            raise CloudError("The provider sent an unreadable response.") from e
+
+    def visuals(self, lines, media="image", style="cinematic", api_key=None, api_base=None, timeout=TIMEOUT):
+        """Alias for the lyric-based background visual provider."""
+        return self.background_visuals(lines, media=media, style=style, api_key=api_key, api_base=api_base, timeout=timeout)
+
     def download(self, url, dest_no_ext, max_bytes=80_000_000):
         """Download a media URL; returns the saved path (extension chosen from Content-Type).
 
@@ -183,3 +260,7 @@ class CloudClient:
             raise CloudError(f"Download failed ({e.code}).") from e
         except urllib.error.URLError as e:
             raise CloudError(f"Download failed: {e.reason}") from e
+
+
+# Backwards-compatible alias for any external code that prefers a more descriptive provider name.
+BackgroundVisualsProvider = CloudClient
