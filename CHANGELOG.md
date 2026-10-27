@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0 - unreleased
+- **Cartoons for scenes**: in step 4 (Visuals), "Draw a cartoon for this scene..." opens a frame-by-frame drawing editor
+  (pen, eraser, colours, onion skin, undo, duplicate / delete frames, background colour, 4-30 fps).
+- The song is the clock: Play starts the audio at the scene's start; the lyric being sung is shown as a guide (never saved).
+  Clips shorter than the scene loop; "Fill scene length" adds blank frames to cover it.
+- Saved cartoons become the scene's background clip (`source = "toon"`), so the single-pass FFmpeg render is unchanged;
+  AI visuals never overwrite them and repeated choruses share them.
+- Cloud client: `toon_storyboard()` and `toon_character_rig()` for the toon API (not wired into the UI yet).
+
 ## 1.0.0 - 2026-10-08
 First release: lyric video maker split out of Ideawood Studio (voxcut).
 - Audio + pasted lyrics; Whisper auto-sync with fuzzy alignment, tap-to-sync, even spread, LRC import/export

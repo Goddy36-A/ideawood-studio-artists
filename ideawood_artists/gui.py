@@ -23,6 +23,7 @@ from .paths import asset_path, bundled_fonts_dir, user_fonts_dir
 from .project import FORMATS, LOGO_POSITIONS, QUALITIES, Project
 from .styles import ANIMATIONS, GRADES, HIGHLIGHTS, PRESETS, TRANSITIONS, VIZ_MODES, LyricStyle
 from .theme import ACCENT_PRESETS, THEMES, apply_theme
+from .toon_editor import ToonEditor
 
 AUDIO_FILTER = "Songs (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.mp4 *.mov *.mkv);;All files (*)"
 GENRES = ["", "Afrobeats", "Reggae", "Hip hop", "Gospel", "R&B", "Pop", "Rock", "Acoustic", "Dancehall", "Funk / Disco"]
@@ -898,6 +899,7 @@ class Studio(QMainWindow):
         l2.addWidget(self.sc_table, 1)
         l2.addWidget(hrow(btn("Pick another (AI search)...", self.pick_for_scene), btn("Use my picture / clip...", self.mine_for_scene),
                           btn("Use my files for ALL scenes...", self.mine_for_all), btn("Back to gradient", self.gradient_scene)))
+        l2.addWidget(hrow(btn("Draw a cartoon for this scene...", self.toon_for_scene, True)))
         f3, l3 = card("Artist logo & credit")
         self.logo_edit = QLineEdit()
         self.logo_edit.setPlaceholderText("Optional logo (PNG with transparency works best)")
@@ -947,7 +949,7 @@ class Studio(QMainWindow):
                 pm.fill(QColor(sc.colors[0]))
                 th.setIcon(QIcon(pm))
             self.sc_table.setItem(i, 0, th)
-            for c, v in ((1, f"{fmt_t(sc.start)}"), (2, sc.label), (3, {"ai": "AI", "mine": "Mine"}.get(sc.source, "Gradient"
+            for c, v in ((1, f"{fmt_t(sc.start)}"), (2, sc.label), (3, {"ai": "AI", "mine": "Mine", "toon": "Cartoon"}.get(sc.source, "Gradient"
                                                                                                     if sc.kind == "gradient" else "—")),
                          (4, sc.query)):
                 it = QTableWidgetItem(v)
@@ -1008,11 +1010,26 @@ class Studio(QMainWindow):
             return visuals.download(self.cloud, cand, os.path.join(visuals.media_dir(), f"pick_{abs(hash(cand.url)) % 10**8}"))
 
         def ok(path):
-            sc.kind, sc.path, sc.credit, sc.source = cand.kind, path, cand.credit, "ai"
+            sc.kind, sc.path, sc.credit, sc.source, sc.toon = cand.kind, path, cand.credit, "ai", ""
             scn.share_by_key(self.p.scenes)
             self.fill_scene_table()
             self.schedule_preview()
         self.run_worker(fn, "Downloading...", ok)
+
+    def toon_for_scene(self):
+        r = self._srow()
+        if r < 0:
+            QMessageBox.information(self, APP_NAME, "Select a scene first.")
+            return
+        dlg = ToonEditor(self, self.p, r)
+        if dlg.exec() != QDialog.Accepted or not dlg.result_clip:
+            return
+        sc, clip = self.p.scenes[r], dlg.result_clip
+        sc.kind, sc.path, sc.source, sc.credit, sc.toon = "video", clip.video, "toon", "", clip.folder
+        scn.share_by_key(self.p.scenes)
+        self.fill_scene_table()
+        self.schedule_preview()
+        self.say("Cartoon saved as this scene's background.")
 
     def mine_for_scene(self):
         r = self._srow()
@@ -1038,7 +1055,7 @@ class Studio(QMainWindow):
         r = self._srow()
         if r >= 0:
             sc = self.p.scenes[r]
-            sc.kind, sc.path, sc.source, sc.credit = "gradient", "", "auto", ""
+            sc.kind, sc.path, sc.source, sc.credit, sc.toon = "gradient", "", "auto", "", ""
             self.fill_scene_table()
             self.schedule_preview()
 

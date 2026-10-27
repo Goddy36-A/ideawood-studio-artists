@@ -70,6 +70,7 @@ def replan_keep_media(old: List[Scene], new: List[Scene]) -> List[Scene]:
                                     abs(old[i].start - s.start) < 3.0 else None)
         if src:
             s.kind, s.path, s.query, s.source, s.credit = src.kind, src.path, src.query, src.source, src.credit
+            s.toon = src.toon
     return new
 
 
@@ -83,3 +84,4 @@ def share_by_key(scenes: List[Scene]):
         f = first.get(s.key)
         if f and s.kind == "gradient" and s is not f:
             s.kind, s.path, s.query, s.source, s.credit = f.kind, f.path, f.query, f.source, f.credit
+            s.toon = f.toon

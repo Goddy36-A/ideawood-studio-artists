@@ -125,6 +125,17 @@ class CloudClient:
             raise CloudError(f"No audio in response (keys: {sorted(res)}).")
         return base64.b64decode(b64)
 
+    def toon_storyboard(self, lyrics, bpm=0, mood="", style="storybook toon"):
+        """Scene-by-scene storyboard for a song (text only, a tiny credit cost). Returns the server's
+        {"storyboard": {...}} dict. NOTE: request field names follow the toon API notes - confirm against the server."""
+        return self._post("/api/public/v1/toon", {"action": "storyboard", "lyrics": lyrics, "bpm": bpm,
+                                                  "mood": mood, "style": style})
+
+    def toon_character_rig(self, prompt, style="storybook toon"):
+        """Character portrait + mouth kit (image generation, once per character). Returns {"characterRig": {...}}.
+        NOTE: request field names follow the toon API notes - confirm against the server."""
+        return self._post("/api/public/v1/toon", {"action": "character-rig", "prompt": prompt, "style": style})
+
     def media(self, kind, query, orientation=None, page=1):
         """Search media. orientation e.g. 'horizontal' (optional); page starts at 1."""
         if kind not in MEDIA_KINDS:

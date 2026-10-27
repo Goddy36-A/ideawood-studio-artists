@@ -191,7 +191,7 @@ def fill_scenes(cloud: Optional[CloudClient], p: Project, prefer: str = "video",
     """
     notes: List[str] = []
     scenes = p.scenes
-    idxs = [i for i in (only if only is not None else range(len(scenes))) if scenes[i].source != "mine"]
+    idxs = [i for i in (only if only is not None else range(len(scenes))) if scenes[i].source not in ("mine", "toon")]
     if not idxs:
         return {"filled": 0, "notes": ["Nothing to fill (all scenes use your own files)."]}
     wd = workdir or media_dir()
@@ -271,7 +271,7 @@ def assign_local(scenes: List[Scene], paths: List[str], only: Optional[List[int]
             pth, kind = files[n % len(files)]
             n += 1
             seen[sc.key] = (pth, kind)
-        sc.kind, sc.path, sc.source, sc.credit = kind, pth, "mine", ""
+        sc.kind, sc.path, sc.source, sc.credit, sc.toon = kind, pth, "mine", "", ""
     return len(idxs)
 
 
