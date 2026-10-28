@@ -498,28 +498,41 @@ class ToonEditor(QDialog):
         self.flush_all()
         lip = bool(self.clip.mouth.get("on") and self.cues)       # lip-sync: the clip must cover the whole scene
         n = max(len(self.clip), int(math.ceil(self.scene.duration * self.clip.fps))) if lip else len(self.clip)
-        dlg = QProgressDialog("Making the cartoon clip...", "Cancel", 0, n, self)
-        dlg.setWindowModality(Qt.WindowModal)
-        dlg.setMinimumDuration(0)
+        dlg = None
+        if self.isVisible():                                   # the progress window only makes sense on screen
+            dlg = QProgressDialog("Making the cartoon clip...", "Cancel", 0, n, self)
+            dlg.setWindowModality(Qt.WindowModal)
+            dlg.setMinimumDuration(0)
+
+        def raw(i, t=None):
+            im = self.composite(i, t)                          # keep the image alive while its bytes are copied
+            data = bytes(im.constBits())
+            del im
+            return data
 
         def frames():
             for i in range(n):
                 if lip:      # the drawn frames loop; the mouth follows the song
-                    yield bytes(self.composite(i % len(self.clip), i / float(self.clip.fps)).constBits())
+                    yield raw(i % len(self.clip), i / float(self.clip.fps))
                 else:
-                    yield bytes(self.composite(i).constBits())
+                    yield raw(i)
 
         def prog(k):
-            dlg.setValue(k)
-            QApplication.processEvents()
+            if dlg is not None:
+                dlg.setValue(k)
+                QApplication.processEvents()
         try:
-            toon.export_mp4(self.clip, frames(), on_progress=prog, should_cancel=dlg.wasCanceled)
+            toon.export_mp4(self.clip, frames(), on_progress=prog,
+                            should_cancel=(dlg.wasCanceled if dlg is not None else (lambda: False)))
         except Exception as e:  # noqa: BLE001
-            dlg.close()
-            if not dlg.wasCanceled():
+            cancelled = dlg is not None and dlg.wasCanceled()
+            if dlg is not None:
+                dlg.close()
+            if not cancelled:
                 QMessageBox.warning(self, "Cartoon", str(e))
             return
-        dlg.close()
+        if dlg is not None:
+            dlg.close()
         self.result_clip = self.clip
         self.accept()
 
