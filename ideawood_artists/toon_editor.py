@@ -1,26 +1,30 @@
 """Draw a cartoon for one scene, frame by frame, while the song plays.
 
-The song is the clock: Play starts the audio at the scene's start and shows the frame that belongs to the current
-moment (the clip loops if it is shorter than the scene). The lyric being sung is shown as a guide on the canvas,
-never saved into the drawing. Frames are saved to disk as you leave them, so long clips do not eat memory.
+The drawing board has Paint-3D-style 2D tools (see toon_board.py / toon_tools.py). The song is the clock: Play starts
+the audio at the scene's start and shows the frame that belongs to the current moment (the clip loops if it is
+shorter than the scene). The lyric being sung is shown as a guide on the canvas, never saved into the drawing.
+Frames are saved to disk as you leave them, so long clips do not eat memory.
 """
 from __future__ import annotations
 
 import os
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QDialog, QHBoxLayout, QLabel, QListView,
-                               QListWidget, QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QSlider,
-                               QSpinBox, QVBoxLayout, QWidget, QApplication)
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QDialog, QHBoxLayout, QLabel, QListView,
+                               QListWidget, QListWidgetItem, QMessageBox, QProgressDialog, QPushButton, QScrollArea,
+                               QSpinBox, QVBoxLayout)
 
 from . import toon
 from .project import Project, frame_size
 from .toon import ToonClip
+from .toon_board import PaintBoard
+from .toon_tools import ToolPanel
 
 THUMB = QSize(112, 63)
 CACHE_MAX = 30
+UNDO_MAX = 80
 DRAW_SHORT_SIDE = 720
 
 
@@ -29,69 +33,14 @@ def new_clip_for(p: Project, folder: Optional[str] = None) -> ToonClip:
     return ToonClip.new(w, h, 12, folder)
 
 
-class ToonCanvas(QWidget):
-    stroke_done = Signal()
-
-    def __init__(self, ed: "ToonEditor"):
-        super().__init__()
-        self.ed = ed
-        self.last: Optional[QPointF] = None
-        self.setMinimumSize(560, 320)
-        self.setCursor(Qt.CrossCursor)
-
-    def _fit(self):
-        c = self.ed.clip
-        s = min(self.width() / c.w, self.height() / c.h) * 0.97
-        return s, (self.width() - c.w * s) / 2, (self.height() - c.h * s) / 2
-
-    def _to_img(self, pos) -> QPointF:
-        s, ox, oy = self._fit()
-        return QPointF((pos.x() - ox) / s, (pos.y() - oy) / s)
-
-    def paintEvent(self, _):
-        ed, c = self.ed, self.ed.clip
-        p = QPainter(self)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        p.fillRect(self.rect(), QColor("#222222"))
-        s, ox, oy = self._fit()
-        p.translate(ox, oy)
-        p.scale(s, s)
-        p.fillRect(QRectF(0, 0, c.w, c.h), QColor(c.bg))
-        if ed.onion and ed.cur > 0:
-            p.setOpacity(0.3)
-            p.drawImage(0, 0, ed.img_at(ed.cur - 1))
-            p.setOpacity(1.0)
-        p.drawImage(0, 0, ed.img_at(ed.cur))
-        guide = ed.guide_text()                       # lyric guide: shown here only, never exported
-        if guide:
-            f = QFont()
-            f.setPixelSize(max(18, int(c.h * 0.045)))
-            f.setBold(True)
-            p.setFont(f)
-            r = QRectF(c.w * 0.05, c.h * 0.86, c.w * 0.9, c.h * 0.11)
-            p.setPen(QColor(0, 0, 0, 150))
-            p.drawText(r.translated(2, 2), Qt.AlignCenter | Qt.TextWordWrap, guide)
-            p.setPen(QColor(255, 220, 90, 230))
-            p.drawText(r, Qt.AlignCenter | Qt.TextWordWrap, guide)
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton and not self.ed.playing:
-            self.ed.push_undo()
-            self.last = self._to_img(e.position())
-            self.ed.stroke(self.last, self.last)
-            self.update()
-
-    def mouseMoveEvent(self, e):
-        if self.last is not None:
-            pt = self._to_img(e.position())
-            self.ed.stroke(self.last, pt)
-            self.last = pt
-            self.update()
-
-    def mouseReleaseEvent(self, e):
-        if self.last is not None:
-            self.last = None
-            self.stroke_done.emit()
+def _btn(text, fn, tip="") -> QPushButton:
+    b = QPushButton(text)
+    b.setAutoDefault(False)
+    b.setFocusPolicy(Qt.NoFocus)
+    b.clicked.connect(lambda _=False: fn())
+    if tip:
+        b.setToolTip(tip)
+    return b
 
 
 class ToonEditor(QDialog):
@@ -100,22 +49,30 @@ class ToonEditor(QDialog):
         self.p = project
         self.scene = project.scenes[scene_index]
         self.setWindowTitle(f"Draw a cartoon  -  scene starting {self.scene.start:0.1f}s")
-        self.resize(1180, 820)
+        self.resize(1360, 880)
         sc = self.scene
         self.clip = ToonClip.load(sc.toon) if sc.toon and os.path.isfile(os.path.join(sc.toon, toon.META)) \
             else new_clip_for(project)
         self.imgs: Dict[int, QImage] = {}
         self.dirty: set = set()
         self.undo_stack: List[tuple] = []
+        self.redo_stack: List[tuple] = []
         self.cur = 0
-        self.tool, self.color, self.size, self.onion = "pen", QColor("#111111"), 7, True
+        self.onion = True
         self.playing = False
         self.player = None
         self.audio_out = None
         self.result_clip: Optional[ToonClip] = None
 
-        self.canvas = ToonCanvas(self)
-        self.canvas.stroke_done.connect(self._stroke_done)
+        self.board = PaintBoard(self)
+        self.board.strokeFinished.connect(lambda: self.update_thumb(self.cur))
+        self.panel = ToolPanel(self.board)
+        side = QScrollArea()
+        side.setWidget(self.panel)
+        side.setWidgetResizable(True)
+        side.setFixedWidth(272)
+        side.setFrameShape(QScrollArea.NoFrame)
+
         self.timeline = QListWidget()
         self.timeline.setViewMode(QListView.IconMode)
         self.timeline.setFlow(QListView.LeftToRight)
@@ -123,6 +80,7 @@ class ToonEditor(QDialog):
         self.timeline.setMovement(QListView.Static)
         self.timeline.setIconSize(THUMB)
         self.timeline.setFixedHeight(132)
+        self.timeline.setFocusPolicy(Qt.NoFocus)
         self.timeline.currentRowChanged.connect(self.goto)
         self.info = QLabel()
         self.info.setObjectName("muted")
@@ -130,102 +88,89 @@ class ToonEditor(QDialog):
         self.timer.timeout.connect(self._tick)
 
         lay = QVBoxLayout(self)
-        lay.addLayout(self._tools_row())
-        lay.addLayout(self._frames_row())
-        lay.addWidget(self.canvas, 1)
+        lay.addLayout(self._top_row())
+        mid = QHBoxLayout()
+        mid.addWidget(side)
+        mid.addWidget(self.board, 1)
+        lay.addLayout(mid, 1)
         lay.addWidget(self.timeline)
         lay.addWidget(self.info)
-        ok = QPushButton("Save && use as this scene's background")
-        ok.setDefault(False)
-        ok.clicked.connect(self.save_and_close)
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self.reject)
+        ok = _btn("Save && use as this scene's background", self.save_and_close)
         row = QHBoxLayout()
         row.addStretch(1)
-        row.addWidget(cancel)
+        row.addWidget(_btn("Cancel", self.cancel))
         row.addWidget(ok)
         lay.addLayout(row)
-
-        for key, fn in (("Ctrl+Z", self.undo), (",", lambda: self.goto(self.cur - 1)),
-                        (".", lambda: self.goto(self.cur + 1)), ("Space", self.toggle_play)):
-            QShortcut(QKeySequence(key), self, activated=fn)
+        self._shortcuts()
         self.refresh_timeline()
+        self.board.viewChanged.emit()
 
-    # ------------------------------------------------------------------ UI rows
-    def _tools_row(self):
+    # ------------------------------------------------------------------ UI
+    def _top_row(self):
         row = QHBoxLayout()
-        grp = QButtonGroup(self)
-        for name, label in (("pen", "Pen"), ("eraser", "Eraser")):
-            b = QPushButton(label)
-            b.setCheckable(True)
-            b.setChecked(name == self.tool)
-            b.setFocusPolicy(Qt.NoFocus)
-            b.clicked.connect(lambda _=False, n=name: setattr(self, "tool", n))
-            grp.addButton(b)
-            row.addWidget(b)
-        self.color_btn = QPushButton("Color")
-        self.color_btn.clicked.connect(self.pick_color)
-        self.bg_btn = QPushButton("Background")
-        self.bg_btn.clicked.connect(self.pick_bg)
-        row.addWidget(self.color_btn)
-        row.addWidget(self.bg_btn)
-        row.addWidget(QLabel("Size"))
-        sl = QSlider(Qt.Horizontal)
-        sl.setRange(1, 80)
-        sl.setValue(self.size)
-        sl.setFixedWidth(130)
-        sl.valueChanged.connect(lambda v: setattr(self, "size", v))
-        row.addWidget(sl)
-        on = QCheckBox("Onion skin")
-        on.setChecked(True)
-        on.toggled.connect(self._onion)
-        row.addWidget(on)
-        row.addStretch(1)
-        self._paint_color_btn()
-        return row
-
-    def _frames_row(self):
-        row = QHBoxLayout()
+        row.addWidget(_btn("Undo", self.undo, "Ctrl+Z"))
+        row.addWidget(_btn("Redo", self.redo, "Ctrl+Y"))
         for text, fn in (("+ Frame", self.add_frame), ("Duplicate", self.dup_frame), ("Delete", self.del_frame),
                          ("Fill scene length", self.fill_scene)):
-            b = QPushButton(text)
-            b.setFocusPolicy(Qt.NoFocus)
-            b.clicked.connect(fn)
-            row.addWidget(b)
+            row.addWidget(_btn(text, fn))
         row.addWidget(QLabel("FPS"))
         self.fps = QSpinBox()
         self.fps.setRange(4, 30)
         self.fps.setValue(self.clip.fps)
+        self.fps.setFocusPolicy(Qt.ClickFocus)
         self.fps.valueChanged.connect(self._fps)
         row.addWidget(self.fps)
-        self.play_btn = QPushButton("Play with song")
-        self.play_btn.setFocusPolicy(Qt.NoFocus)
-        self.play_btn.clicked.connect(self.toggle_play)
+        self.bg_btn = _btn("Background", self.pick_bg)
+        row.addWidget(self.bg_btn)
+        on = QCheckBox("Onion skin")
+        on.setChecked(True)
+        on.setFocusPolicy(Qt.NoFocus)
+        on.toggled.connect(self._onion)
+        row.addWidget(on)
+        self.play_btn = _btn("Play with song", self.toggle_play, "P")
         row.addWidget(self.play_btn)
         row.addStretch(1)
+        self._paint_bg_btn()
         return row
 
-    def _paint_color_btn(self):
-        self.color_btn.setStyleSheet(f"border-left: 14px solid {self.color.name()};")
-        self.bg_btn.setStyleSheet(f"border-left: 14px solid {self.clip.bg};")
+    def _shortcuts(self):
+        def sc(key, fn):
+            QShortcut(QKeySequence(key), self, activated=fn)
+        sc("Ctrl+Z", self.undo)
+        sc("Ctrl+Y", self.redo)
+        sc("Ctrl+Shift+Z", self.redo)
+        sc(",", lambda: self.goto(self.cur - 1))
+        sc(".", lambda: self.goto(self.cur + 1))
+        sc("P", self.toggle_play)
+        sc("Ctrl+A", self.board.select_all)
+        sc("Ctrl+C", self.board.copy)
+        sc("Ctrl+X", self.board.cut)
+        sc("Ctrl+V", self.board.paste)
+        sc("Ctrl+=", lambda: self.board.zoom_at(1.25))
+        sc("Ctrl++", lambda: self.board.zoom_at(1.25))
+        sc("Ctrl+-", lambda: self.board.zoom_at(1 / 1.25))
+        sc("Ctrl+0", self.board.fit_view)
+        sc("X", self.board.swap_colors)
+        sc("[", lambda: self.panel.set_size(self.board.size - max(1, self.board.size // 8)))
+        sc("]", lambda: self.panel.set_size(self.board.size + max(1, self.board.size // 8)))
+        for key, name in (("B", "brush"), ("E", "eraser"), ("F", "fill"), ("U", "shape"), ("T", "text"),
+                          ("M", "select"), ("I", "picker"), ("H", "hand")):
+            sc(key, lambda n=name: self.board.set_tool(n))
 
-    def pick_color(self):
-        c = QColorDialog.getColor(self.color, self)
-        if c.isValid():
-            self.color = c
-            self._paint_color_btn()
+    def _paint_bg_btn(self):
+        self.bg_btn.setStyleSheet(f"border-left: 14px solid {self.clip.bg};")
 
     def pick_bg(self):
         c = QColorDialog.getColor(QColor(self.clip.bg), self)
         if c.isValid():
             self.clip.bg = c.name()
-            self._paint_color_btn()
-            self.canvas.update()
+            self._paint_bg_btn()
+            self.board.update()
             self.refresh_timeline()
 
     def _onion(self, on):
         self.onion = on
-        self.canvas.update()
+        self.board.update()
 
     def _fps(self, v):
         self.clip.fps = v
@@ -234,8 +179,7 @@ class ToonEditor(QDialog):
         self._status()
 
     # ------------------------------------------------------------------ frame images (lazy, saved as you leave)
-    def img_at(self, i: int) -> QImage:
-        fid = self.clip.order[i]
+    def img_of(self, fid: int) -> QImage:
         im = self.imgs.get(fid)
         if im is None:
             path = self.clip.path_of(fid)
@@ -249,6 +193,12 @@ class ToonEditor(QDialog):
             self._evict()
         return im
 
+    def img_at(self, i: int) -> QImage:
+        return self.img_of(self.clip.order[i])
+
+    def mark_dirty(self):
+        self.dirty.add(self.clip.order[self.cur])
+
     def _flush(self, fid: int):
         if fid in self.dirty and fid in self.imgs:
             self.imgs[fid].save(self.clip.path_of(fid), "PNG")
@@ -257,7 +207,7 @@ class ToonEditor(QDialog):
     def _evict(self):
         if len(self.imgs) <= CACHE_MAX:
             return
-        keep = {self.clip.order[self.cur], self.clip.order[max(0, self.cur - 1)]}
+        keep = {self.clip.order[min(self.cur, len(self.clip) - 1)], self.clip.order[max(0, self.cur - 1)]}
         for fid in list(self.imgs):
             if fid in keep:
                 continue
@@ -279,41 +229,31 @@ class ToonEditor(QDialog):
         p.end()
         return out
 
-    # ------------------------------------------------------------------ drawing
+    # ------------------------------------------------------------------ undo / redo (per frame image, by frame id)
     def push_undo(self):
         fid = self.clip.order[self.cur]
-        self.undo_stack.append((fid, self.img_at(self.cur).copy()))
-        del self.undo_stack[:-60]
+        self.undo_stack.append((fid, self.img_of(fid).copy()))
+        del self.undo_stack[:-UNDO_MAX]
+        self.redo_stack.clear()
 
-    def undo(self):
-        while self.undo_stack:
-            fid, im = self.undo_stack.pop()
+    def _swap_from(self, src: List[tuple], dst: List[tuple]) -> bool:
+        while src:
+            fid, im = src.pop()
             if fid in self.clip.order:
+                dst.append((fid, self.img_of(fid).copy()))
                 self.imgs[fid] = im
                 self.dirty.add(fid)
+                self.board.discard_selection()
                 self.goto(self.clip.order.index(fid))
                 self.update_thumb(self.cur)
-                return
+                return True
+        return False
 
-    def stroke(self, a: QPointF, b: QPointF):
-        fid = self.clip.order[self.cur]
-        im = self.img_at(self.cur)
-        p = QPainter(im)
-        p.setRenderHint(QPainter.Antialiasing)
-        if self.tool == "eraser":
-            p.setCompositionMode(QPainter.CompositionMode_Clear)
-            pen = QPen(Qt.black, self.size * 2)
-        else:
-            pen = QPen(self.color, self.size)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        p.setPen(pen)
-        p.drawLine(a, b)
-        p.end()
-        self.dirty.add(fid)
+    def undo(self):
+        self._swap_from(self.undo_stack, self.redo_stack)
 
-    def _stroke_done(self):
-        self.update_thumb(self.cur)
+    def redo(self):
+        self._swap_from(self.redo_stack, self.undo_stack)
 
     # ------------------------------------------------------------------ timeline
     def _icon(self, i: int) -> QIcon:
@@ -327,29 +267,34 @@ class ToonEditor(QDialog):
         self.timeline.setCurrentRow(self.cur)
         self.timeline.blockSignals(False)
         self._status()
-        self.canvas.update()
+        self.board.update()
 
     def update_thumb(self, i: int):
         it = self.timeline.item(i)
         if it:
             it.setIcon(self._icon(i))
 
+    def _settle(self):
+        """Place any floating selection and save the current frame before the frame list changes."""
+        self.board.commit_selection()
+        self._flush(self.clip.order[self.cur])
+
     def goto(self, i: int):
         i = max(0, min(i, len(self.clip) - 1))
         if i != self.cur:
-            self._flush(self.clip.order[self.cur])
+            self._settle()
         self.cur = i
         self.timeline.blockSignals(True)
         self.timeline.setCurrentRow(i)
         self.timeline.blockSignals(False)
         self._status()
-        self.canvas.update()
+        self.board.update()
 
     def _status(self):
         sc = self.scene
-        n = len(self.clip)
-        self.info.setText(f"Frame {self.cur + 1}/{n}  |  clip {self.clip.seconds:0.1f}s of the scene's {sc.duration:0.1f}s "
-                          f"(shorter clips loop)  |  {self.clip.w}x{self.clip.h}  |  keys: Space play, , and . step, Ctrl+Z undo")
+        self.info.setText(f"Frame {self.cur + 1}/{len(self.clip)}  |  clip {self.clip.seconds:0.1f}s of the scene's "
+                          f"{sc.duration:0.1f}s (shorter clips loop)  |  {self.clip.w}x{self.clip.h}  |  keys: P play, "
+                          f", and . step frames, Space+drag pan, [ ] brush size, Ctrl+Z undo")
 
     def guide_text(self) -> str:
         t = self.scene.start + self.cur / float(self.clip.fps)
@@ -359,19 +304,22 @@ class ToonEditor(QDialog):
         return ""
 
     def add_frame(self):
+        self._settle()
         self.goto_after(self.clip.insert_blank(self.cur))
 
     def dup_frame(self):
-        self._flush(self.clip.order[self.cur])
+        self._settle()
         self.goto_after(self.clip.duplicate(self.cur))
 
     def del_frame(self):
+        self.board.discard_selection()
         fid = self.clip.order[self.cur]
         self.dirty.discard(fid)
         self.imgs.pop(fid, None)
         self.goto_after(self.clip.delete(self.cur))
 
     def fill_scene(self):
+        self._settle()
         self.clip.extend_to(self.scene.duration)
         self.refresh_timeline()
 
@@ -390,11 +338,10 @@ class ToonEditor(QDialog):
     def toggle_play(self):
         if self.playing:
             return self.stop()
+        self._settle()
         self.playing = True
         self.play_btn.setText("Stop")
-        self._flush(self.clip.order[self.cur])
-        has_audio = bool(self.p.audio and os.path.isfile(self.p.audio))
-        if has_audio:
+        if self.p.audio and os.path.isfile(self.p.audio):
             self._ensure_player()
             self.player.setPosition(int((self.scene.start + self.cur / float(self.clip.fps)) * 1000))
             self.player.play()
@@ -421,11 +368,12 @@ class ToonEditor(QDialog):
         self.timeline.setCurrentRow(nxt)
         self.timeline.blockSignals(False)
         self._status()
-        self.canvas.update()
+        self.board.update()
 
     # ------------------------------------------------------------------ finish
     def save_and_close(self):
         self.stop()
+        self.board.commit_selection()
         self.flush_all()
         n = len(self.clip)
         dlg = QProgressDialog("Making the cartoon clip...", "Cancel", 0, n, self)
@@ -450,7 +398,15 @@ class ToonEditor(QDialog):
         self.result_clip = self.clip
         self.accept()
 
-    def reject(self):
+    def cancel(self):
         self.stop()
+        self.board.commit_selection()
         self.flush_all()          # keep drawn frames on disk even if the clip was not exported
-        super().reject()
+        QDialog.reject(self)
+
+    def reject(self):
+        """Esc: first place a floating selection, a second Esc closes."""
+        if self.board.has_selection():
+            self.board.commit_selection()
+            return
+        self.cancel()

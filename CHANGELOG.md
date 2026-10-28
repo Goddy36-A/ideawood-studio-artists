@@ -2,7 +2,11 @@
 
 ## 1.1.0 - unreleased
 - **Cartoons for scenes**: in step 4 (Visuals), "Draw a cartoon for this scene..." opens a frame-by-frame drawing editor
-  (pen, eraser, colours, onion skin, undo, duplicate / delete frames, background colour, 4-30 fps).
+  with a Paint-3D-style board: 8 brushes (pen, marker, pencil, crayon, spray, watercolor, calligraphy, pixel), eraser,
+  fill bucket with tolerance, 10 shapes (outline / fill / both), text with any font, rectangle select (move, resize,
+  flip, rotate, copy / cut / paste, insert picture), colour picker, zoom and pan, primary / secondary colours (left /
+  right mouse button), opacity, stroke smoothing, pen-tablet pressure, undo / redo, onion skin, duplicate / delete
+  frames, background colour, 4-30 fps.
 - The song is the clock: Play starts the audio at the scene's start; the lyric being sung is shown as a guide (never saved).
   Clips shorter than the scene loop; "Fill scene length" adds blank frames to cover it.
 - Saved cartoons become the scene's background clip (`source = "toon"`), so the single-pass FFmpeg render is unchanged;
