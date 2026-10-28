@@ -20,6 +20,9 @@ import urllib.request
 API_BASE = os.environ.get("IDEAWOOD_API_BASE") or os.environ.get("VOXCUT_API_BASE") or "https://quotetube.lovable.app".rstrip("/")
 VISUAL_API_BASE = os.environ.get("IDEAWOOD_VISUAL_API_BASE") or "https://lyric-visual.onrender.com".rstrip("/")
 
+# The cartoon "board" service (separate from the QuoteTube API; has its own x-api-key and monthly credits).
+TOON_API_BASE = os.environ.get("IDEAWOOD_TOON_API_BASE") or "https://dooddraw.lovable.app"
+
 MEDIA_KINDS = ("image", "video", "music")
 IDEA_KINDS = ("quote",)  # extend as the server adds more
 TIMEOUT = 60
@@ -155,16 +158,23 @@ class CloudClient:
             raise CloudError(f"No audio in response (keys: {sorted(res)}).")
         return base64.b64decode(b64)
 
-    def toon_storyboard(self, lyrics, bpm=0, mood="", style="storybook toon"):
-        """Scene-by-scene storyboard for a song (text only, a tiny credit cost). Returns the server's
-        {"storyboard": {...}} dict. NOTE: request field names follow the toon API notes - confirm against the server."""
-        return self._post("/api/public/v1/toon", {"action": "storyboard", "lyrics": lyrics, "bpm": bpm,
-                                                  "mood": mood, "style": style})
+    def toon_storyboard(self, lyrics, duration, scene_count, style="storybook", context="", api_key=None,
+                        api_base=None, timeout=90):
+        """Ask the toon board service for a scene-by-scene storyboard of the song (text only, tiny credit cost).
 
-    def toon_character_rig(self, prompt, style="storybook toon"):
-        """Character portrait + mouth kit (image generation, once per character). Returns {"characterRig": {...}}.
-        NOTE: request field names follow the toon API notes - confirm against the server."""
-        return self._post("/api/public/v1/toon", {"action": "character-rig", "prompt": prompt, "style": style})
+        POST {TOON_API_BASE}/api/public/v1/toon with header ``x-api-key`` and
+        {"task": "storyboard", "lyrics", "duration", "sceneCount", "style", "context"}.
+        Returns the raw JSON; use ``parse_storyboard`` to get plain scene dicts out of it."""
+        key = (api_key or "").strip()
+        if not key:
+            raise NotSignedIn("Please paste your board API key first.")
+        base = (api_base or TOON_API_BASE).rstrip("/")
+        body = {"task": "storyboard", "lyrics": lyrics, "duration": int(duration), "sceneCount": int(scene_count),
+                "style": style, "context": context}
+        res = self._post_json(f"{base}/api/public/v1/toon", body, headers={"x-api-key": key})
+        if not isinstance(res, dict):
+            raise CloudError("The board service returned an unexpected response.")
+        return res
 
     def media(self, kind, query, orientation=None, page=1):
         """Search media. orientation e.g. 'horizontal' (optional); page starts at 1."""
@@ -264,3 +274,30 @@ class CloudClient:
 
 # Backwards-compatible alias for any external code that prefers a more descriptive provider name.
 BackgroundVisualsProvider = CloudClient
+
+
+def _first(d, names, default=""):
+    for n in names:
+        v = d.get(n)
+        if isinstance(v, (str, int, float)) and str(v).strip():
+            return str(v).strip()
+    return default
+
+
+def parse_storyboard(resp):
+    """Plain scene dicts out of a toon storyboard response, tolerant of small naming differences:
+    [{"section", "lyric", "action", "camera", "mood"}, ...]. Returns [] when there is nothing usable."""
+    if not isinstance(resp, dict):
+        return []
+    sb = resp.get("storyboard") if isinstance(resp.get("storyboard"), dict) else resp
+    raw = sb.get("scenes") or resp.get("scenes") or []
+    out = []
+    for sc in raw if isinstance(raw, list) else []:
+        if not isinstance(sc, dict):
+            continue
+        out.append({"section": _first(sc, ("section", "name", "title")),
+                    "lyric": _first(sc, ("lyric", "lyrics", "text")),
+                    "action": _first(sc, ("actionDescription", "action", "description", "summary")),
+                    "camera": _first(sc, ("camera", "cameraDirection")),
+                    "mood": _first(sc, ("moodPrompt", "visualPrompt", "prompt", "mood"))})
+    return [o for o in out if o["action"] or o["mood"] or o["lyric"]]

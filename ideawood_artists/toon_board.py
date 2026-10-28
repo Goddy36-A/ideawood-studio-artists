@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QInputDialog, QWidget
 from . import paint
 from .paint import FMT, Stroke
 
-TOOLS = ("brush", "eraser", "fill", "shape", "text", "select", "picker", "hand")
+TOOLS = ("brush", "eraser", "fill", "shape", "text", "select", "picker", "hand", "mouth")
 HANDLE = 11  # px, resize handle of a selection (screen pixels)
 
 
@@ -33,6 +33,7 @@ class PaintBoard(QWidget):
     colorsChanged = Signal()
     viewChanged = Signal()
     strokeFinished = Signal()          # something was drawn on the current frame
+    mouthChanged = Signal()            # lip-sync mouth switched on / moved / resized
 
     def __init__(self, ed):
         super().__init__()
@@ -65,6 +66,7 @@ class PaintBoard(QWidget):
         self.shape_a: Optional[QPointF] = None
         self.shape_b: Optional[QPointF] = None
         self._btn = Qt.LeftButton
+        self._mouth_drag = False
 
         self.sel: Optional[QRectF] = None       # selection rectangle (image coordinates)
         self.float_img: Optional[QImage] = None  # lifted pixels, drawn at ``sel`` until committed
@@ -151,6 +153,13 @@ class PaintBoard(QWidget):
             p.setOpacity(1.0)
         if self.float_img is not None and self.sel is not None:
             p.drawImage(self.sel, self.float_img)
+        ov = ed.mouth_overlay()                  # lip-sync mouth for the current moment
+        if ov is not None:
+            p.drawImage(ov[1], ov[0])
+            if self.tool == "mouth":
+                p.setBrush(Qt.NoBrush)
+                p.setPen(QPen(QColor(255, 255, 255, 200), 2 / s, Qt.DashLine))
+                p.drawRect(ov[1])
         guide = ed.guide_text()                  # lyric guide: shown here only, never exported
         if guide:
             f = QFont()
@@ -209,6 +218,10 @@ class PaintBoard(QWidget):
             return self.pick_color(ip, button)
         if t == "picker":
             return self.pick_color(ip, button)
+        if t == "mouth":
+            self._mouth_drag = True
+            self.ed.set_mouth_pos(ip)
+            return
         if t == "fill":
             return self.do_fill(ip, button)
         if t == "text":
@@ -233,6 +246,10 @@ class PaintBoard(QWidget):
 
     def pointer_move(self, ip: QPointF, pressure: float = 1.0, mods=Qt.NoModifier):
         t = self.tool
+        if t == "mouth":
+            if self._mouth_drag:
+                self.ed.set_mouth_pos(ip)
+            return
         if t == "select":
             return self._sel_move(ip, mods)
         if t == "shape" and self.shape_a is not None:
@@ -257,6 +274,9 @@ class PaintBoard(QWidget):
 
     def pointer_up(self, ip: QPointF, mods=Qt.NoModifier):
         t = self.tool
+        if t == "mouth":
+            self._mouth_drag = False
+            return
         if t == "select":
             return self._sel_up()
         if t == "shape" and self.shape_a is not None:

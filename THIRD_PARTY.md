@@ -5,3 +5,4 @@
 - **Fonts** (SIL Open Font License 1.1): Poppins, Bebas Neue, Anton, Staatliches, Archivo Black, Alfa Slab One, Abril Fatface,
   DM Serif Display, Great Vibes, Lobster, Pacifico, Righteous, Bungee, Monoton - from github.com/google/fonts; full licence texts
   in `assets/fonts/OFL-LICENSES.txt`.
+- **Rhubarb Lip Sync** (MIT, bundled in the Windows EXE) - https://github.com/DanielSWolf/rhubarb-lip-sync - mouth timing for cartoon lip-sync; includes PocketSphinx (BSD-style) data

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QColo
                                QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 
 from . import APP_NAME, __version__, asr, fonts, lyrics, render, scenes as scn, syncer, visuals
-from .cloud import CloudClient, CloudError
+from .cloud import CloudClient, CloudError, parse_storyboard
 from .paths import asset_path, bundled_fonts_dir, user_fonts_dir
 from .project import FORMATS, LOGO_POSITIONS, QUALITIES, Project
 from .styles import ANIMATIONS, GRADES, HIGHLIGHTS, PRESETS, TRANSITIONS, VIZ_MODES, LyricStyle
@@ -899,7 +899,8 @@ class Studio(QMainWindow):
         l2.addWidget(self.sc_table, 1)
         l2.addWidget(hrow(btn("Pick another (AI search)...", self.pick_for_scene), btn("Use my picture / clip...", self.mine_for_scene),
                           btn("Use my files for ALL scenes...", self.mine_for_all), btn("Back to gradient", self.gradient_scene)))
-        l2.addWidget(hrow(btn("Draw a cartoon for this scene...", self.toon_for_scene, True)))
+        l2.addWidget(hrow(btn("Draw a cartoon for this scene...", self.toon_for_scene, True),
+                          btn("AI storyboard ideas for all scenes...", self.storyboard_ai)))
         f3, l3 = card("Artist logo & credit")
         self.logo_edit = QLineEdit()
         self.logo_edit.setPlaceholderText("Optional logo (PNG with transparency works best)")
@@ -953,6 +954,8 @@ class Studio(QMainWindow):
                                                                                                     if sc.kind == "gradient" else "—")),
                          (4, sc.query)):
                 it = QTableWidgetItem(v)
+                if c == 2 and sc.idea:
+                    it.setToolTip("Storyboard idea: " + sc.idea)
                 if c != 4:
                     it.setFlags(it.flags() & ~Qt.ItemIsEditable)
                 self.sc_table.setItem(i, c, it)
@@ -1015,6 +1018,40 @@ class Studio(QMainWindow):
             self.fill_scene_table()
             self.schedule_preview()
         self.run_worker(fn, "Downloading...", ok)
+
+    def storyboard_ai(self):
+        """One text-only AI call: a storyboard idea for every scene, shown in the cartoon editor. Uses a small
+        amount of the board service's monthly credit, so it asks first."""
+        if not self.p.lines or not self.p.scenes:
+            QMessageBox.information(self, APP_NAME, "Time the lyrics first (steps 1-2), then plan scenes.")
+            return
+        key = (self.qs.value("toon_api_key", "") or "").strip()
+        if not key:
+            key, ok = QInputDialog.getText(self, APP_NAME, "Paste your board API key (for the cartoon / board service):",
+                                           QLineEdit.Password)
+            key = key.strip()
+            if not ok or not key:
+                return
+            if self.remember.isChecked():
+                self.qs.setValue("toon_api_key", key)
+        if QMessageBox.question(self, APP_NAME, "This sends your lyrics to the AI once and uses a small amount of your "
+                                "monthly credit. Continue?") != QMessageBox.Yes:
+            return
+        text = "\n".join(ln.text for ln in self.p.lines)
+        n, dur, mood = len(self.p.scenes), round(self.p.duration), self.p.mood or ""
+
+        def fn(w):
+            return self.cloud.toon_storyboard(text, dur, n, context=mood, api_key=key)
+
+        def ok(resp):
+            items = parse_storyboard(resp)
+            got = scn.apply_storyboard(self.p.scenes, items)
+            self.fill_scene_table()
+            if got:
+                self.say(f"Storyboard ideas added to {got} scene(s) - hover a scene's lyrics, or open its cartoon editor.")
+            else:
+                QMessageBox.information(self, APP_NAME, "The service answered, but there were no scene ideas in the reply.")
+        self.run_worker(fn, "Writing the storyboard...", ok)
 
     def toon_for_scene(self):
         r = self._srow()

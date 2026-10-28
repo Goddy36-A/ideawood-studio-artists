@@ -46,6 +46,17 @@ jobs:
           Copy-Item $cli.FullName bin\whisper\whisper-cli.exe
           Get-ChildItem $cli.DirectoryName -Filter *.dll | Copy-Item -Destination bin\whisper
 
+      - name: Download Rhubarb Lip Sync (mouth timing for cartoons, bundled)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/DanielSWolf/rhubarb-lip-sync/releases/download/v1.13.0/Rhubarb-Lip-Sync-1.13.0-Windows.zip"
+          Invoke-WebRequest $url -OutFile rhubarb.zip
+          Expand-Archive rhubarb.zip -DestinationPath rhubarb_tmp
+          $exe = Get-ChildItem rhubarb_tmp -Recurse -Filter rhubarb.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force bin\rhubarb | Out-Null
+          Copy-Item (Join-Path $exe.DirectoryName "*") bin\rhubarb -Recurse
+          if (-not (Test-Path bin\rhubarb\res)) { throw "Rhubarb res folder missing" }
+
       - name: Cache the bundled speech model
         uses: actions/cache@v4
         with:
@@ -76,7 +87,7 @@ jobs:
           pyinstaller --noconfirm --onefile --windowed --name IdeawoodStudioArtists `
             --icon assets\icon.ico --add-data "assets;assets" --add-data "models;models" `
             --add-binary "bin\ffmpeg.exe;bin" --add-binary "bin\ffprobe.exe;bin" `
-            --add-data "bin\whisper;bin\whisper" `
+            --add-data "bin\whisper;bin\whisper" --add-data "bin\rhubarb;bin\rhubarb" `
             --hidden-import PySide6.QtMultimedia `
             main.py
           Copy-Item dist\IdeawoodStudioArtists.exe "dist\IdeawoodStudioArtists-${{ github.ref_name }}.exe"

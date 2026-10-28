@@ -18,12 +18,13 @@ PALETTE = ["#000000", "#3b3b3b", "#7f7f7f", "#c3c3c3", "#ffffff", "#880015", "#e
 
 TOOL_LABELS: Tuple[Tuple[str, str, str], ...] = (
     ("brush", "Brush", "B"), ("eraser", "Eraser", "E"), ("fill", "Fill", "F"), ("shape", "Shapes", "U"),
-    ("text", "Text", "T"), ("select", "Select", "M"), ("picker", "Picker", "I"), ("hand", "Hand", "H"))
+    ("text", "Text", "T"), ("select", "Select", "M"), ("picker", "Picker", "I"), ("hand", "Hand", "H"),
+    ("mouth", "Lip-sync", "L"))
 
 # which option groups are visible for each tool
 TOOL_GROUPS = {"brush": ("brush", "size", "opacity", "smooth"), "eraser": ("size",), "fill": ("fill", "opacity"),
                "shape": ("shape", "size", "opacity"), "text": ("text", "opacity"), "select": ("sel",),
-               "picker": ("hint_picker",), "hand": ("hint_hand",)}
+               "picker": ("hint_picker",), "hand": ("hint_hand",), "mouth": ("mouth",)}
 
 
 def _button(text: str, fn: Callable, tip: str = "") -> QPushButton:
@@ -149,6 +150,30 @@ class ToolPanel(QWidget):
         sl.addWidget(hint, len(acts) // 2 + 1, 0, 1, 2)
         self._group("sel", "Selection", box)
 
+        self.mouth_on = QCheckBox("Show the lip-sync mouth")
+        self.mouth_on.toggled.connect(lambda v: self.board.ed.set_mouth_on(v))
+        w, self.mouth_size = self._slider("Mouth size", 40, 700, 240, lambda v: self.board.ed.set_mouth_size(v), " px")
+        self.mouth_status = QLabel()
+        self.mouth_status.setWordWrap(True)
+        self.mouth_status.setObjectName("muted")
+        hint = QLabel("1. Click \"Listen to the song\" - it works out which mouth shape is needed when (offline, free).  "
+                      "2. Click on the picture where the mouth goes; drag to move it. A frame without its own spot "
+                      "uses the previous frame's.  3. Save: the clip then covers the whole scene.")
+        hint.setWordWrap(True)
+        hint.setObjectName("muted")
+        box = QWidget()
+        ml = QVBoxLayout(box)
+        ml.setContentsMargins(0, 0, 0, 0)
+        ml.setSpacing(4)
+        ml.addWidget(self.mouth_on)
+        ml.addWidget(w)
+        ml.addWidget(_button("Listen to the song (Rhubarb)", lambda: self.board.ed.analyze_lipsync()))
+        ml.addWidget(_button("Use my own mouth pictures...", lambda: self.board.ed.choose_kit()))
+        ml.addWidget(_button("Use the built-in mouths", lambda: self.board.ed.choose_kit(builtin=True)))
+        ml.addWidget(self.mouth_status)
+        ml.addWidget(hint)
+        self._group("mouth", "Lip-sync mouth", box)
+
         for name, text in (("hint_picker", "Click to pick a colour from the picture: left click = primary, right click = "
                             "secondary. Alt+click works with any tool."),
                            ("hint_hand", "Drag to move the picture around. Scroll wheel zooms. Hold Space with any "
@@ -200,11 +225,14 @@ class ToolPanel(QWidget):
         lay.addLayout(zr)
         lay.addStretch(1)
 
+        board.mouthChanged.connect(self.refresh_mouth)
         board.toolChanged.connect(self.show_tool)
         board.colorsChanged.connect(self.paint_colors)
         board.viewChanged.connect(self.paint_zoom)
         self.show_tool(board.tool)
         self.paint_colors()
+        if hasattr(board.ed, "cues"):
+            self.refresh_mouth()
 
     # ------------------------------------------------------------------ building blocks
     def _group(self, name: str, title, widget: QWidget):
@@ -241,6 +269,17 @@ class ToolPanel(QWidget):
         l.addWidget(s, 1)
         l.addWidget(val)
         return w, s
+
+    def refresh_mouth(self):
+        ed = self.board.ed
+        self.mouth_on.blockSignals(True)
+        self.mouth_on.setChecked(bool(ed.clip.mouth.get("on")))
+        self.mouth_on.blockSignals(False)
+        self.mouth_size.setValue(int(ed.clip.mouth.get("size", 240)))
+        n = len(ed.cues)
+        kit = "your own mouth pictures" if ed.clip.mouth.get("kit") else "the built-in mouths"
+        self.mouth_status.setText((f"{n} mouth changes found for this scene. " if n else
+                                   "Not analysed yet: the mouth stays closed. ") + f"Using {kit}.")
 
     # ------------------------------------------------------------------ reactions
     def show_tool(self, name: str):

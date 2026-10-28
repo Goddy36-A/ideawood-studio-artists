@@ -11,7 +11,11 @@
   Clips shorter than the scene loop; "Fill scene length" adds blank frames to cover it.
 - Saved cartoons become the scene's background clip (`source = "toon"`), so the single-pass FFmpeg render is unchanged;
   AI visuals never overwrite them and repeated choruses share them.
-- Cloud client: `toon_storyboard()` and `toon_character_rig()` for the toon API (not wired into the UI yet).
+- **Lip-sync**: the editor's Lip-sync tool listens to the song with the bundled Rhubarb (offline, no credits) and shows
+  the right mouth shape at the right moment. Built-in cartoon mouths, or your own A-H / X pictures. Click to place the
+  mouth on a frame (frames without a spot inherit the previous one); drawn frames loop while the mouth follows the song.
+- **AI storyboard**: "AI storyboard ideas for all scenes..." in step 4 asks the toon board service once (small credit
+  cost, asks first) and adds an idea to every scene; shown on hover and inside the cartoon editor.
 
 ## 1.0.0 - 2026-10-08
 First release: lyric video maker split out of Ideawood Studio (voxcut).

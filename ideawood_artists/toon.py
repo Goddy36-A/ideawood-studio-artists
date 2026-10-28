@@ -36,6 +36,9 @@ class ToonClip:
     bg: str = "#ffffff"
     order: List[int] = field(default_factory=lambda: [1])
     next_id: int = 2
+    # lip-sync mouth: on/off, width in px, per-frame position {frame id: [x, y]} (a frame without one inherits the
+    # previous frame's), and an optional folder with your own A.png ... H.png, X.png
+    mouth: dict = field(default_factory=lambda: {"on": False, "size": 240, "pos": {}, "kit": ""})
 
     # ---------------------------------------------------------------- creation / persistence
     @staticmethod
@@ -50,13 +53,15 @@ class ToonClip:
     def load(folder: str) -> "ToonClip":
         with open(os.path.join(folder, META), "r", encoding="utf-8") as f:
             d = json.load(f)
-        return ToonClip(folder, d["w"], d["h"], d["fps"], d.get("bg", "#ffffff"),
-                        list(d.get("order") or [1]), int(d.get("next_id", 2)))
+        c = ToonClip(folder, d["w"], d["h"], d["fps"], d.get("bg", "#ffffff"),
+                     list(d.get("order") or [1]), int(d.get("next_id", 2)))
+        c.mouth.update(d.get("mouth") or {})
+        return c
 
     def save_meta(self):
         with open(os.path.join(self.folder, META), "w", encoding="utf-8") as f:
             json.dump({"version": 1, "w": self.w, "h": self.h, "fps": self.fps, "bg": self.bg,
-                       "order": self.order, "next_id": self.next_id}, f)
+                       "order": self.order, "next_id": self.next_id, "mouth": self.mouth}, f)
 
     # ---------------------------------------------------------------- frames
     def __len__(self) -> int:
@@ -109,6 +114,19 @@ class ToonClip:
         for _ in range(max(0, need)):
             self.order.append(self._new_id())
         return max(0, need)
+
+    # ---------------------------------------------------------------- lip-sync mouth placement
+    def mouth_pos(self, i: int):
+        """Where the mouth sits on frame i: its own position, else the nearest earlier one, else the middle."""
+        pos = self.mouth.get("pos") or {}
+        for k in range(min(i, len(self.order) - 1), -1, -1):
+            v = pos.get(str(self.order[k]))
+            if v:
+                return float(v[0]), float(v[1])
+        return self.w / 2.0, self.h * 0.55
+
+    def set_mouth_pos(self, i: int, x: float, y: float):
+        self.mouth.setdefault("pos", {})[str(self.order[i])] = [round(float(x), 1), round(float(y), 1)]
 
     @property
     def video(self) -> str:

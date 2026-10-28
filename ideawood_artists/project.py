@@ -45,6 +45,7 @@ class Scene:
     colors: List[str] = field(default_factory=lambda: ["#141E30", "#243B55"])
     label: str = ""                 # first words of the lyrics in this scene (for the table)
     toon: str = ""                  # folder of a drawn cartoon (see toon.py) when source == "toon"
+    idea: str = ""                  # AI storyboard idea for this scene (shown in the cartoon editor)
 
     @property
     def duration(self) -> float:

@@ -65,12 +65,17 @@ def plan_scenes(lines: List[LyricLine], duration: float, min_len: float = 8.0, m
 def replan_keep_media(old: List[Scene], new: List[Scene]) -> List[Scene]:
     """After lyric edits: keep pictures/clips for scenes whose lyrics did not change (same key), else by position."""
     by_key = {s.key: s for s in old if s.kind != "gradient"}
+    old_ideas, seen = {}, {}
+    for s in old:
+        old_ideas.setdefault(s.key, []).append(s.idea)
     for i, s in enumerate(new):
+        nth = seen[s.key] = seen.get(s.key, -1) + 1          # the 2nd chorus keeps the 2nd chorus's idea
+        s.idea = (old_ideas.get(s.key) or [])[nth] if nth < len(old_ideas.get(s.key) or []) else ""
         src = by_key.get(s.key) or (old[i] if i < len(old) and old[i].kind != "gradient" and
                                     abs(old[i].start - s.start) < 3.0 else None)
         if src:
             s.kind, s.path, s.query, s.source, s.credit = src.kind, src.path, src.query, src.source, src.credit
-            s.toon = src.toon
+            s.toon, s.idea = src.toon, src.idea
     return new
 
 
@@ -85,3 +90,26 @@ def share_by_key(scenes: List[Scene]):
         if f and s.kind == "gradient" and s is not f:
             s.kind, s.path, s.query, s.source, s.credit = f.kind, f.path, f.query, f.source, f.credit
             s.toon = f.toon
+
+
+def apply_storyboard(scenes, items):
+    """Write storyboard ideas onto the scenes (by position; if the counts differ the ideas are spread evenly).
+    Returns how many scenes got an idea."""
+    if not scenes or not items:
+        return 0
+    n = 0
+    for i, sc in enumerate(scenes):
+        it = items[i] if len(items) == len(scenes) else items[min(len(items) - 1, int(i * len(items) / len(scenes)))]
+        bits = []
+        if it.get("section"):
+            bits.append(it["section"] + ":")
+        if it.get("action"):
+            bits.append(it["action"].rstrip("."))
+            bits[-1] += "."
+        if it.get("camera"):
+            bits.append(f"Camera: {it['camera'].rstrip('.')}.")
+        if it.get("mood"):
+            bits.append(f"Look: {it['mood'].rstrip('.')}.")
+        sc.idea = " ".join(bits)
+        n += 1 if sc.idea else 0
+    return n
